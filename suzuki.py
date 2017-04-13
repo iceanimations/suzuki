@@ -14,9 +14,13 @@ Any help will be greatly appreciated.		SUZUKI Hisao
 __version__ = "0.2.1"
 
 import BaseHTTPServer, select, socket, SocketServer, urlparse
-from sys import argv
 
-class ProxyHandler (BaseHTTPServer.BaseHTTPRequestHandler):
+import sys
+import logging
+
+logger = logging.getLogger(__name__)
+
+class SuzukiHandler (BaseHTTPServer.BaseHTTPRequestHandler):
     __base = BaseHTTPServer.BaseHTTPRequestHandler
     __base_handle = __base.handle
 
@@ -38,7 +42,7 @@ class ProxyHandler (BaseHTTPServer.BaseHTTPRequestHandler):
             host_port = netloc[:i], int(netloc[i+1:])
         else:
             host_port = netloc, 80
-        print "\t" "connect to %s:%d" % host_port
+        logger.info( "\t" "connect to %s:%d" % host_port )
         try: soc.connect(host_port)
         except socket.error, arg:
             try: msg = arg[1]
@@ -58,7 +62,7 @@ class ProxyHandler (BaseHTTPServer.BaseHTTPRequestHandler):
                 self.wfile.write("\r\n")
                 self._read_write(soc, 300)
         finally:
-            print "\t" "bye"
+            logger.info( "\t" "bye" )
             soc.close()
             self.connection.close()
 
@@ -83,7 +87,7 @@ class ProxyHandler (BaseHTTPServer.BaseHTTPRequestHandler):
                 soc.send("\r\n")
                 self._read_write(soc)
         finally:
-            print "\t" "bye"
+            logger.info( "\t" "bye" )
             soc.close()
             self.connection.close()
 
@@ -108,45 +112,58 @@ class ProxyHandler (BaseHTTPServer.BaseHTTPRequestHandler):
                         out.send(data)
                         count = 0
             else:
-                print "\t" "idle", count
+                logger.info( "\t" "idle" "%d" % count )
             if count == max_idling: break
+
+    def log_message(self, format, *args, **kwargs):
+        logger.log(logging.INFO, format, *args, **kwargs)
+
+    def log_error(self, format, *args, **kwargs):
+        logger.log(logging.ERROR, format, *args, **kwargs)
 
     do_HEAD = do_GET
     do_POST = do_GET
     do_PUT  = do_GET
     do_DELETE=do_GET
 
-class ThreadingHTTPServer (SocketServer.ThreadingMixIn,
-                           BaseHTTPServer.HTTPServer): pass
+class SuzukiServer (SocketServer.ThreadingMixIn,
+                           BaseHTTPServer.HTTPServer):
+
+    def __init__(self, port=6666, allowed_clients=None, max_idling=20):
+        server_address = ('', 6666)
+        if allowed_clients:
+            allowed = [socket.gethostbyname(cl) for cl in allowed_clients]
+            SuzukiHandler.allowed_clients = allowed
+        SuzukiHandler.max_idling = max_idling
+
+        BaseHTTPServer.HTTPServer.__init__(self, server_address ,SuzukiHandler)
+
+    def run(self):
+        sa = self.socket.getsockname()
+        logger.info( "Serving HTTP on %s port %d ..." % sa)
+        if not hasattr(self.RequestHandlerClass, 'allowed_clients'):
+            logger.info( "Any clients will be served..." )
+        else:
+            for ip in self.RequestHandlerClass.allowed_clients:
+                logger.info ( "Accept: %s " % ip )
+        self.serve_forever()
 
 
 def run_suzuki(port=6666, allowed_clients=None, max_idling=20):
-    if allowed_clients:
-        allowed = [socket.gethostbyname(cl) for cl in allowed_clients]
-        ProxyHandler.allowed_clients = allowed
-
-    ProxyHandler.protocol_version = 'HTTP/1.0'
-    ProxyHandler.max_idling=20
-
-    server_address = ('', port)
-    httpd = ThreadingHTTPServer(server_address, ProxyHandler)
-    sa = httpd.socket.getsockname()
-    print "Serving HTTP on", sa[0], "port", sa[1], "..."
-    if not allowed_clients:
-        print "Any clients will be served..."
-    else:
-        for name, ip in zip(allowed_clients, allowed):
-            print "Accept: %s (%s)" % (ip, name)
-    httpd.serve_forever()
+    suzuki = SuzukiServer(port=port, allowed_clients=allowed_clients,
+            max_idling=max_idling)
+    suzuki.run()
+    return suzuki
 
 def suzuki_main():
-    if argv[1:] and argv[1] in ('-h', '--help'):
-        print argv[0], "[port [allowed_client_name ...]]"
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+    if sys.argv[1:] and sys.argv[1] in ('-h', '--help'):
+        print sys.argv[0], "[port [allowed_client_name ...]]"
     else:
         kwargs = {}
-        if argv[1:]:
-            kwargs['port']=int(argv[1])
-            kwargs['allowed_clients'] = argv[2:]
+        if sys.argv[1:]:
+            kwargs['port']=int(sys.argv[1])
+            kwargs['allowed_clients'] = sys.argv[2:]
         run_suzuki(**kwargs)
 
 if __name__ == '__main__':
